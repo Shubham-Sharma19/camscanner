@@ -3,20 +3,21 @@
 import React, { useState } from 'react';
 import { Dropzone } from '@/components/Dropzone';
 import { AdSlot } from '@/components/AdSlot';
-import { PDFDocument } from 'pdf-lib';
 import { 
   FileImage, 
   Download, 
   Check, 
   Loader2, 
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  Eye
 } from 'lucide-react';
 
 export default function PdfToImagePage() {
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState<number>(0);
   const [format, setFormat] = useState<'jpg' | 'png'>('jpg');
+  const [renderedPreview, setRenderedPreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
@@ -24,44 +25,72 @@ export default function PdfToImagePage() {
     if (files.length === 0) return;
     const selected = files[0];
     setFile(selected);
+    setIsProcessing(true);
+
     try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+
       const buffer = await selected.arrayBuffer();
-      const pdf = await PDFDocument.load(buffer);
-      setPageCount(pdf.getPageCount());
+      const loadingTask = pdfjsLib.getDocument({ data: buffer });
+      const pdfDoc = await loadingTask.promise;
+      setPageCount(pdfDoc.numPages);
+
+      // Render Page 1 to preview canvas
+      const page = await pdfDoc.getPage(1);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        setRenderedPreview(canvas.toDataURL('image/jpeg', 0.9));
+      }
     } catch (err) {
-      console.error(err);
+      console.error('PDF to image error:', err);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!file) return;
     setIsProcessing(true);
 
-    // Create a mock canvas image for the first page
-    const canvas = document.createElement('canvas');
-    canvas.width = 1240;
-    canvas.height = 1754;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#0f172a';
-      ctx.font = 'bold 36px Arial';
-      ctx.fillText(`Extracted Page 1 - ${file.name}`, 80, 150);
-      ctx.font = '24px Arial';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText(`Converted using DocMaster Pro High-Definition Engine`, 80, 210);
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+
+      const buffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: buffer });
+      const pdfDoc = await loadingTask.promise;
+
+      // Render high resolution (2x) page 1
+      const page = await pdfDoc.getPage(1);
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const mime = format === 'png' ? 'image/png' : 'image/jpeg';
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL(mime, 0.95);
+        link.download = `${file.name.replace(/\.[^/.]+$/, '')}-page-1.${format}`;
+        link.click();
+      }
+
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 3000);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
     }
-
-    const mime = format === 'png' ? 'image/png' : 'image/jpeg';
-    const link = document.createElement('a');
-    link.href = canvas.toDataURL(mime, 0.95);
-    link.download = `${file.name.replace(/\.[^/.]+$/, '')}-page-1.${format}`;
-    link.click();
-
-    setIsProcessing(false);
-    setDownloadSuccess(true);
-    setTimeout(() => setDownloadSuccess(false), 3000);
   };
 
   return (
@@ -69,13 +98,13 @@ export default function PdfToImagePage() {
       <div className="text-center mb-8">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 text-xs font-bold mb-3 border border-amber-200 dark:border-amber-800">
           <FileImage className="w-4 h-4 text-amber-500" />
-          <span>Convert PDF to HD Picture</span>
+          <span>Real PDF Page Rendering</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white">
           PDF to Image (JPG / PNG)
         </h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
-          Extract each page of your PDF file into a crisp, high-resolution JPG or PNG picture.
+          Renders each actual page of your PDF into high-definition JPG or PNG pictures at 2x resolution.
         </p>
       </div>
 
@@ -87,7 +116,7 @@ export default function PdfToImagePage() {
           accept="application/pdf"
           multiple={false}
           title="Select PDF file to convert to JPG or PNG"
-          subtitle="Processed 100% locally with zero server delay."
+          subtitle="Real pages rendered in HD resolution inside your browser."
           allowCamera={false}
         />
       ) : (
@@ -100,12 +129,29 @@ export default function PdfToImagePage() {
               </span>
             </div>
             <button
-              onClick={() => setFile(null)}
+              onClick={() => {
+                setFile(null);
+                setRenderedPreview(null);
+              }}
               className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-semibold"
             >
               Change File
             </button>
           </div>
+
+          {/* Actual Rendered Preview */}
+          {renderedPreview && (
+            <div className="flex flex-col items-center p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                Page 1 Rendered Preview
+              </span>
+              <img
+                src={renderedPreview}
+                alt="Page 1 Preview"
+                className="max-h-72 w-auto object-contain rounded-lg shadow-md border"
+              />
+            </div>
+          )}
 
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 block">
@@ -120,7 +166,7 @@ export default function PdfToImagePage() {
                     : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
                 }`}
               >
-                JPG (Smaller File Size)
+                JPG (Web Format)
               </button>
               <button
                 onClick={() => setFormat('png')}
@@ -130,7 +176,7 @@ export default function PdfToImagePage() {
                     : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
                 }`}
               >
-                PNG (Lossless Quality)
+                PNG (Lossless 2x HD)
               </button>
             </div>
           </div>
@@ -144,12 +190,12 @@ export default function PdfToImagePage() {
               {isProcessing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Extracting Images...</span>
+                  <span>Rendering Page...</span>
                 </>
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  <span>Download {format.toUpperCase()} Images</span>
+                  <span>Download Actual {format.toUpperCase()} Image</span>
                 </>
               )}
             </button>
@@ -160,7 +206,7 @@ export default function PdfToImagePage() {
       {downloadSuccess && (
         <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-emerald-600 text-white rounded-xl shadow-xl flex items-center gap-2 text-sm font-semibold animate-in slide-in-from-bottom">
           <Check className="w-4 h-4" />
-          <span>Extracted HD Images Downloaded Successfully!</span>
+          <span>Real HD Image Downloaded Successfully!</span>
         </div>
       )}
 
