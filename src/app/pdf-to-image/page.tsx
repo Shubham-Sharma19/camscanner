@@ -10,16 +10,32 @@ import {
   Loader2, 
   Sparkles,
   ArrowRight,
-  Eye
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 export default function PdfToImagePage() {
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState<number>(0);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [format, setFormat] = useState<'jpg' | 'png'>('jpg');
   const [renderedPreview, setRenderedPreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  const renderPage = async (pdfDoc: any, pageNum: number) => {
+    const page = await pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      setRenderedPreview(canvas.toDataURL('image/jpeg', 0.9));
+    }
+  };
 
   const handleFiles = async (files: File[]) => {
     if (files.length === 0) return;
@@ -35,21 +51,32 @@ export default function PdfToImagePage() {
       const loadingTask = pdfjsLib.getDocument({ data: buffer });
       const pdfDoc = await loadingTask.promise;
       setPageCount(pdfDoc.numPages);
+      setCurrentPage(1);
 
-      // Render Page 1 to preview canvas
-      const page = await pdfDoc.getPage(1);
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-
-      if (ctx) {
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        setRenderedPreview(canvas.toDataURL('image/jpeg', 0.9));
-      }
+      await renderPage(pdfDoc, 1);
     } catch (err) {
       console.error('PDF to image error:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const changePage = async (newPageNum: number) => {
+    if (!file || newPageNum < 1 || newPageNum > pageCount) return;
+    setCurrentPage(newPageNum);
+    setIsProcessing(true);
+
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+
+      const buffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: buffer });
+      const pdfDoc = await loadingTask.promise;
+
+      await renderPage(pdfDoc, newPageNum);
+    } catch (err) {
+      console.error('Error changing page:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -67,8 +94,8 @@ export default function PdfToImagePage() {
       const loadingTask = pdfjsLib.getDocument({ data: buffer });
       const pdfDoc = await loadingTask.promise;
 
-      // Render high resolution (2x) page 1
-      const page = await pdfDoc.getPage(1);
+      // Render high resolution (2x HD)
+      const page = await pdfDoc.getPage(currentPage);
       const viewport = page.getViewport({ scale: 2.0 });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
@@ -80,7 +107,7 @@ export default function PdfToImagePage() {
         const mime = format === 'png' ? 'image/png' : 'image/jpeg';
         const link = document.createElement('a');
         link.href = canvas.toDataURL(mime, 0.95);
-        link.download = `${file.name.replace(/\.[^/.]+$/, '')}-page-1.${format}`;
+        link.download = `${file.name.replace(/\.[^/.]+$/, '')}-page-${currentPage}.${format}`;
         link.click();
       }
 
@@ -139,15 +166,32 @@ export default function PdfToImagePage() {
             </button>
           </div>
 
-          {/* Actual Rendered Preview */}
+          {/* Actual Rendered Preview with Page Pagination */}
           {renderedPreview && (
             <div className="flex flex-col items-center p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                Page 1 Rendered Preview
-              </span>
+              <div className="flex items-center justify-between w-full max-w-sm mb-3">
+                <button
+                  onClick={() => changePage(currentPage - 1)}
+                  disabled={currentPage <= 1 || isProcessing}
+                  className="p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-30"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Page {currentPage} of {pageCount}
+                </span>
+                <button
+                  onClick={() => changePage(currentPage + 1)}
+                  disabled={currentPage >= pageCount || isProcessing}
+                  className="p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-30"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
               <img
                 src={renderedPreview}
-                alt="Page 1 Preview"
+                alt={`Page ${currentPage} Preview`}
                 className="max-h-72 w-auto object-contain rounded-lg shadow-md border"
               />
             </div>
@@ -195,7 +239,7 @@ export default function PdfToImagePage() {
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  <span>Download Actual {format.toUpperCase()} Image</span>
+                  <span>Download Page {currentPage} ({format.toUpperCase()})</span>
                 </>
               )}
             </button>
